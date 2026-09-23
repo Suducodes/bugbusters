@@ -1,0 +1,5 @@
+octave
+octave-signal
+gnuplot-nox
+fonts-dejavu-core
+fonts-freefont-otf

@@ -3,8 +3,9 @@ title: Bug Busters
 emoji: 🐞
 colorFrom: blue
 colorTo: green
-sdk: docker
-app_port: 8080
+sdk: gradio
+sdk_version: 4.44.1
+app_file: app.py
 pinned: false
 ---
 

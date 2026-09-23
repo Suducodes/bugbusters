@@ -176,7 +176,8 @@ def unlock():
 
 
 if __name__ == "__main__":
-    port = int(os.environ.get("BB_PORT", "8080"))
+    # Hugging Face Spaces (SPACE_ID set) expect port 7860.
+    port = int(os.environ.get("BB_PORT") or os.environ.get("PORT") or (7860 if os.environ.get("SPACE_ID") else 8080))
     print("=" * 60)
     print("  Bug Busters compiler")
     print(f"  Octave     : {runner.octave or 'NOT FOUND'}")
