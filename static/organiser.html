@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bug Busters · Organiser</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%232a4b8d' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6l-8-3Z'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/static/css/app.css">
+<style>
+  body { min-height: 100vh; }
+  .spacer { flex: 1; }
+  .top { height: 58px; display: flex; align-items: center; gap: 14px; padding: 0 20px; background: var(--surface); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 5; }
+  .top::after { content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; background: linear-gradient(90deg, var(--navy), var(--green)); }
+  .page { max-width: 1400px; margin: 0 auto; padding: 18px; display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(300px, 1fr); gap: 16px; }
+  .card h3 { margin: 0; font-size: 15px; }
+  .hd { display: flex; align-items: center; gap: 10px; padding: 14px 16px; border-bottom: 1px solid var(--line); }
+  .bd { padding: 16px; }
+  .edbox { height: 440px; border: 1px solid var(--line-strong); border-radius: 12px; overflow: hidden; }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .page > * { min-width: 0; }
+  .top { overflow: hidden; }
+  .pre { margin: 12px 0 0; padding: 12px 14px; font-family: var(--mono); font-size: 12.5px; background: var(--console-bg); color: var(--console-text); border-radius: 12px; white-space: pre-wrap; max-height: 220px; overflow: auto; }
+  .pre .e { color: #ffb4b4; }
+  .drop { border: 2px dashed var(--line-strong); border-radius: 14px; padding: 26px 16px; text-align: center; color: var(--text-2); cursor: pointer; transition: .15s; }
+  .drop.over { border-color: var(--green); background: var(--green-50); color: var(--green); }
+  .drop b { color: var(--text); }
+  .file { display: flex; align-items: center; gap: 10px; padding: 10px 16px; border-top: 1px solid var(--line); font-size: 13px; }
+  .file .n { font-family: var(--mono); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .file .s { color: var(--text-3); font-size: 12px; }
+  .gate { min-height: 100vh; display: grid; place-items: center; padding: 20px; }
+  .gate .card { width: 100%; max-width: 360px; padding: 28px; }
+  .side { display: flex; flex-direction: column; gap: 16px; }
+  @media (max-width: 1000px) { .page { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script src="/static/js/common.js"></script>
+<script src="/static/js/editor.js"></script>
+<script>
+(function () {
+  const { $, $$, esc, toast, icons } = BB;
+  const app = $("#app");
+  let PIN = sessionStorage.getItem("bb-org-pin") || "";
+  const call = async (path, opts = {}) => {
+    const init = { method: opts.method || (opts.body ? "POST" : "GET"), headers: { "X-PIN": PIN } };
+    if (opts.body instanceof FormData) init.body = opts.body;
+    else if (opts.body) { init.headers["Content-Type"] = "application/json"; init.body = JSON.stringify(opts.body); }
+    const r = await fetch(path, init);
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { const e = new Error(d.error || "Request failed"); e.status = r.status; throw e; }
+    return d;
+  };
+
+  function gate() {
+    app.innerHTML = `<div class="gate"><form class="card" id="g"><div class="brand" style="margin-bottom:16px">${BB.brandHtml()}</div>
+      <h2 style="margin:0 0 4px">Organiser</h2><p style="margin:0 0 16px;color:var(--text-2);font-size:13px">Add problems and data files while the contest is running.</p>
+      <div class="field"><label>Organiser PIN</label><input class="input mono" type="password" id="pin" autofocus></div>
+      <button class="btn btn-primary btn-lg" style="width:100%">Open</button></form></div>`;
+    $("#g").onsubmit = async (e) => {
+      e.preventDefault(); PIN = $("#pin").value;
+      try { await call("/api/org/files"); sessionStorage.setItem("bb-org-pin", PIN); main(); }
+      catch (err) { toast(err.message, "error"); }
+    };
+  }
+
+  let ed;
+  function main() {
+    app.innerHTML = `
+      <header class="top"><span class="brand">${BB.brandHtml()}</span><span class="eyebrow">// organiser</span><span class="spacer"></span>
+        <a class="btn btn-sm" href="/" target="_blank">Open student page ↗</a>
+        <button class="btn btn-sm icon-btn btn-ghost" id="theme">${icons.moon}</button></header>
+      <div class="page">
+        <section class="card">
+          <div class="hd"><span class="window-dots"><i></i><i></i><i></i></span><h3>Add / edit a problem</h3></div>
+          <div class="bd">
+            <div class="row" style="margin-bottom:12px">
+              <input class="input mono" id="fname" placeholder="problem2.m" style="max-width:260px">
+              <button class="btn" id="newBtn">New</button>
+              <span class="spacer"></span>
+              <button class="btn btn-primary" id="testBtn">${icons.play} Test run</button>
+              <button class="btn btn-green" id="saveBtn">${icons.send} Publish to students</button>
+            </div>
+            <div class="edbox" id="ed"></div>
+            <div id="out"></div>
+            <p style="font-size:12.5px;color:var(--text-3);margin:12px 0 0">Paste the buggy code students should debug. Once published, it shows up in every student's <b>📂 Open</b> menu and they get a notification. Publishing a name that already exists replaces that file.</p>
+          </div>
+        </section>
+        <div class="side">
+          <section class="card">
+            <div class="hd"><h3>Upload files</h3></div>
+            <div class="bd"><label class="drop" id="drop"><input type="file" id="fileIn" multiple hidden accept=".m,.mat,.csv,.txt,.dat">
+              <div style="font-size:28px">⬆</div><b>Drop files here</b> or click to choose<br><span style="font-size:12px">.m scripts · .mat / .csv / .txt data</span></label></div>
+          </section>
+          <section class="card">
+            <div class="hd"><h3>Files students can use</h3><span class="spacer"></span><button class="btn btn-sm btn-ghost" id="refresh">↻</button></div>
+            <div id="list"></div>
+          </section>
+        </div>
+      </div>`;
+    $("#theme").onclick = () => BB.toggleTheme();
+    ed = new CodeEditor($("#ed"), { value: "% problem2.m\n", fontSize: 14, onRun: test, onSave: save });
+    $("#newBtn").onclick = () => { $("#fname").value = ""; ed.setValue("", ""); $("#out").innerHTML = ""; $("#fname").focus(); };
+    $("#testBtn").onclick = test;
+    $("#saveBtn").onclick = save;
+    $("#refresh").onclick = list;
+    const drop = $("#drop");
+    $("#fileIn").onchange = (e) => upload(e.target.files);
+    ["dragenter", "dragover"].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add("over"); }));
+    ["dragleave", "drop"].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.remove("over"); }));
+    drop.addEventListener("drop", (e) => upload(e.dataTransfer.files));
+    list();
+  }
+
+  async function test() {
+    $("#out").innerHTML = `<div class="pre">Running…</div>`;
+    try {
+      const r = await BB.api("/api/run", { body: { code: ed.value } });
+      ed.setErrorLine(r.error?.line || 0);
+      $("#out").innerHTML = `<div class="pre">${esc(r.stdout || "")}${r.stderr ? `\n${esc(r.stderr)}` : ""}${r.error ? `\n<span class="e">${r.error.line ? "Line " + r.error.line + ": " : ""}${esc(r.error.message)}</span>` : ""}${r.figures?.length ? `\n▸ ${r.figures.length} figure(s)` : ""}\n<span style="color:#5f6f90">${r.status} · ${r.time_ms} ms</span></div>`;
+    } catch (e) { $("#out").innerHTML = `<div class="pre"><span class="e">${esc(e.message)}</span></div>`; }
+  }
+
+  async function save() {
+    const name = $("#fname").value.trim();
+    if (!name) { toast("Type a file name first, e.g. problem2.m", "error"); $("#fname").focus(); return; }
+    try { const r = await call("/api/org/script", { body: { name, code: ed.value } }); $("#fname").value = r.name; toast(`Published ${r.name}`, "ok"); list(); }
+    catch (e) { toast(e.message, "error"); }
+  }
+
+  async function upload(files) {
+    if (!files?.length) return;
+    const fd = new FormData();
+    for (const f of files) fd.append("files", f);
+    try {
+      const r = await call("/api/org/upload", { body: fd });
+      if (r.saved.length) toast(`Uploaded ${r.saved.join(", ")}`, "ok");
+      if (r.skipped.length) toast(`Skipped (type not allowed): ${r.skipped.join(", ")}`, "error");
+      list();
+    } catch (e) { toast(e.message, "error"); }
+  }
+
+  async function list() {
+    let files;
+    try { files = await call("/api/org/files"); } catch (e) { if (e.status === 403) { sessionStorage.removeItem("bb-org-pin"); gate(); } return; }
+    $("#list").innerHTML = files.map((f) => `<div class="file"><span>${f.name.toLowerCase().endsWith(".m") ? "📄" : "📊"}</span><span class="n">${esc(f.name)}</span><span class="s">${(f.size / 1024).toFixed(1)} KB</span>
+      ${f.name.toLowerCase().endsWith(".m") ? `<button class="btn btn-sm" data-edit="${esc(f.name)}">Edit</button>` : ""}<button class="btn btn-sm btn-danger" data-del="${esc(f.name)}">✕</button></div>`).join("")
+      || `<div class="file" style="color:var(--text-3)">No files yet.</div>`;
+    $$("[data-edit]").forEach((b) => b.onclick = async () => {
+      const r = await BB.api("/api/script/" + encodeURIComponent(b.dataset.edit));
+      $("#fname").value = r.name; ed.setValue(r.code, r.code); $("#out").innerHTML = ""; window.scrollTo(0, 0);
+    });
+    $$("[data-del]").forEach((b) => b.onclick = async () => {
+      if (!confirm(`Delete ${b.dataset.del}? Students won't be able to open or load it any more.`)) return;
+      await call("/api/org/files/" + encodeURIComponent(b.dataset.del), { method: "DELETE" }); list();
+    });
+  }
+
+  PIN ? call("/api/org/files").then(main).catch(gate) : gate();
+})();
+</script>
+</body>
+</html>
