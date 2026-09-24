@@ -16,7 +16,9 @@
     if (!SB.configured) throw new Error("Supabase is not configured (docs/js/config.js).");
     if (auth && SB.session) await refreshIfNeeded();
     const h = { apikey: key, "Content-Type": "application/json", ...headers };
-    h.Authorization = "Bearer " + (auth && SB.session ? SB.session.access_token : key);
+    // Signed-in inspectors send their token; students send only the apikey (works for both the
+    // legacy "anon" JWT key and the newer "sb_publishable_" keys, which aren't JWTs).
+    if (auth && SB.session) h.Authorization = "Bearer " + SB.session.access_token;
     let res;
     try { res = await fetch(url + path, { method, headers: h, body: body === undefined ? undefined : JSON.stringify(body) }); }
     catch (e) { const err = new Error("No internet connection."); err.offline = true; throw err; }

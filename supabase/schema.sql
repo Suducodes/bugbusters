@@ -15,6 +15,7 @@ create table if not exists private.config (
   unlock_pin text not null default '2609'
 );
 insert into private.config (id) values (1) on conflict do nothing;
+alter table private.config enable row level security;   -- no policies: only the bb_* functions read it
 
 create table if not exists public.inspectors (email text primary key);
 
