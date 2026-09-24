@@ -4,13 +4,10 @@ services:
     image: bugbusters
     container_name: bugbusters
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"   # only this laptop can reach the engine
     volumes:
       # Drop problem scripts (.m) and data files (.mat, .csv) in this folder.
       - ./files:/files
-    env_file:
-      - path: .env              # BB_UNLOCK_PIN / BB_ORGANISER_PIN live here (not committed)
-        required: false
     environment:
       BB_TIMEOUT: "15"          # seconds per run
     cap_add:

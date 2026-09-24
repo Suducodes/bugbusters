@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bug Busters · Inspector</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%232a4b8d' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6l-8-3Z'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="css/app.css">
+<style>
+  html, body { height: 100%; }
+  body { display: flex; flex-direction: column; overflow: hidden; }
+  .spacer { flex: 1; }
+  .top { height: 58px; flex: none; display: flex; align-items: center; gap: 12px; padding: 0 18px; background: var(--surface); border-bottom: 1px solid var(--line); position: relative; }
+  .top::after { content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; background: linear-gradient(90deg, var(--navy), var(--green)); }
+  .pillx { display: inline-flex; align-items: center; gap: 7px; height: 30px; padding: 0 12px; border-radius: 9px; font-size: 12px; font-weight: 800; background: var(--surface-2); color: var(--text-2); cursor: default; border: 0; }
+  .pillx i { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+  .pillx.ok { background: var(--green-50); color: var(--green); }
+  .pillx.bad { background: var(--red-50); color: var(--red); }
+  .pillx.warn { background: var(--amber-50); color: var(--amber); }
+  button.pillx { cursor: pointer; }
+  .nav { display: flex; gap: 2px; padding: 0 14px; background: var(--surface); border-bottom: 1px solid var(--line); flex: none; }
+  .nav button { height: 44px; padding: 0 14px; border: 0; background: none; font-weight: 700; font-size: 13px; color: var(--text-3); cursor: pointer; border-bottom: 2px solid transparent; display: flex; align-items: center; gap: 6px; }
+  .nav button.on { color: var(--navy); border-bottom-color: var(--navy); }
+  :root[data-theme="dark"] .nav button.on { color: #9db8ff; border-bottom-color: #9db8ff; }
+  .nav .n { font-size: 10.5px; padding: 1px 6px; border-radius: 8px; background: var(--red-50); color: var(--red); }
+  .view { flex: 1; min-height: 0; overflow: auto; }
+  .card h3 { margin: 0; font-size: 15px; }
+  .hd { display: flex; align-items: center; gap: 10px; padding: 14px 16px; border-bottom: 1px solid var(--line); flex: none; }
+  .bd { padding: 16px; }
+
+  /* marking */
+  .mark { height: 100%; display: grid; grid-template-columns: 250px 290px minmax(0, 1fr); gap: 12px; padding: 12px; }
+  .col { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; box-shadow: var(--shadow); display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+  .scroll { flex: 1; overflow: auto; }
+  .qbtn { width: 100%; text-align: left; border: 0; background: none; padding: 12px 14px; border-bottom: 1px solid var(--line); cursor: pointer; display: block; }
+  .qbtn:hover { background: var(--surface-2); }
+  .qbtn.on { background: var(--navy-50); box-shadow: inset 3px 0 0 var(--navy); }
+  .qbtn .qn { font-family: var(--mono); font-size: 11.5px; font-weight: 700; color: var(--text-3); }
+  .qbtn b { display: block; font-size: 14px; margin: 2px 0 6px; }
+  .qbtn .c { display: flex; gap: 6px; flex-wrap: wrap; }
+  .names { padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+  .nm { text-align: left; border: 1px solid var(--line); background: var(--surface); border-radius: 12px; padding: 10px 12px; cursor: pointer; display: flex; align-items: center; gap: 10px; transition: border-color .12s, transform .12s; animation: rise .3s ease backwards; }
+  .nm:hover { border-color: var(--navy); transform: translateX(2px); }
+  .nm.on { border-color: var(--navy); box-shadow: 0 0 0 3px color-mix(in srgb, var(--navy) 18%, transparent); }
+  .nm .av { width: 32px; height: 32px; border-radius: 9px; background: var(--navy-50); color: var(--navy); display: grid; place-items: center; font-weight: 800; font-size: 12px; flex: none; }
+  .nm.marked .av { background: var(--green); color: #fff; }
+  .nm.updated .av { background: var(--amber); color: #fff; }
+  .nm .tx { flex: 1; min-width: 0; }
+  .nm .tx b { display: block; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .nm .tx span { font-family: var(--mono); font-size: 11px; color: var(--text-3); }
+  @keyframes rise { from { opacity: 0; transform: translateY(6px); } }
+  .seg { display: inline-flex; border: 1px solid var(--line-strong); border-radius: 9px; overflow: hidden; }
+  .seg button { border: 0; background: none; padding: 5px 10px; font-size: 12px; font-weight: 700; color: var(--text-3); cursor: pointer; }
+  .seg button.on { background: var(--navy); color: #fff; }
+
+  .review { display: flex; flex-direction: column; min-height: 0; }
+  .rv-head { padding: 14px 16px; border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 12px; flex-wrap: wrap; flex: none; }
+  .rv-head h3 { margin: 0; font-size: 17px; }
+  .rv-tools { display: flex; gap: 8px; padding: 10px 16px; border-bottom: 1px solid var(--line); flex-wrap: wrap; align-items: center; flex: none; }
+  .rv-body { flex: 1; min-height: 0; display: grid; grid-template-rows: minmax(0, 1.3fr) minmax(0, 1fr); }
+  .rv-code { min-height: 0; overflow: auto; padding: 12px 16px; }
+  .rv-code .diff { max-height: none; }
+  .edbox { height: 100%; min-height: 240px; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+  .rv-out { min-height: 0; overflow: auto; background: var(--console-bg); color: var(--console-text); font-family: var(--mono); font-size: 12.5px; line-height: 1.6; padding: 12px 16px; white-space: pre-wrap; word-break: break-word; }
+  .rv-out .meta { color: #5f6f90; } .rv-out .err { color: #ff9b9b; } .rv-out .warn { color: #f2c46d; } .rv-out .cmd { color: #7fa6ff; }
+  .rv-out img { max-width: 100%; border-radius: 8px; background: #fff; margin-top: 8px; display: block; }
+  .markbar { flex: none; display: flex; gap: 10px; align-items: center; padding: 12px 16px; border-top: 1px solid var(--line); background: var(--surface-2); flex-wrap: wrap; }
+  .markbar .input { height: 40px; }
+  .markbar .score { width: 90px; text-align: center; font-size: 18px; font-weight: 800; font-family: var(--mono); }
+  .empty { padding: 40px 20px; text-align: center; color: var(--text-3); font-size: 13.5px; }
+
+  /* other tabs */
+  .page { max-width: 1400px; margin: 0 auto; padding: 18px; }
+  .pgrid { display: grid; grid-template-columns: 280px minmax(0, 1fr); gap: 16px; align-items: start; }
+  .plist button { width: 100%; text-align: left; display: flex; gap: 10px; align-items: center; padding: 10px 14px; border: 0; background: none; cursor: pointer; border-bottom: 1px solid var(--line); }
+  .plist button:hover { background: var(--surface-2); }
+  .plist button.on { background: var(--navy-50); }
+  .plist b { flex: 1; font-size: 13px; }
+  .form-grid { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 12px; }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .edbox2 { height: 320px; border: 1px solid var(--line-strong); border-radius: 12px; overflow: hidden; }
+  .pre { margin: 10px 0 0; padding: 10px 12px; font-family: var(--mono); font-size: 12px; background: var(--console-bg); color: var(--console-text); border-radius: 10px; white-space: pre-wrap; max-height: 200px; overflow: auto; }
+  .tablecard { overflow: auto; }
+  .gate { flex: 1; display: grid; place-items: center; padding: 20px; }
+  .gate .card { width: 100%; max-width: 380px; padding: 28px; }
+  .setgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }
+  .ev { display: flex; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--line); font-size: 13px; }
+  .ev .t { font-family: var(--mono); font-size: 11.5px; color: var(--text-3); width: 70px; flex: none; }
+  .ev.lock .what { color: var(--red); font-weight: 600; }
+  @media (max-width: 1150px) { .mark { grid-template-columns: 200px 240px minmax(0, 1fr); } }
+</style>
+</head>
+<body>
+<div id="root" style="display:contents"></div>
+<script src="js/config.js"></script>
+<script src="js/sb.js"></script>
+<script src="js/common.js"></script>
+<script src="js/editor.js"></script>
+<script src="js/inspector.js"></script>
+</body>
+</html>

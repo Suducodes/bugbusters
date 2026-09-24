@@ -12,7 +12,6 @@ RUN useradd --create-home --uid 1500 runner
 
 WORKDIR /app
 COPY app.py runner.py /app/
-COPY static /app/static
 COPY files /files
 # Works both as root (docker compose: code runs as `runner`, network blocked) and as an
 # unprivileged user (Hugging Face Spaces runs containers as uid 1000).
