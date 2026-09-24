@@ -59,5 +59,8 @@
     saveSession(s);
     return s;
   };
+  SB.signUp = (email, password) => request("/auth/v1/signup", { method: "POST", body: { email, password }, auth: false });
+  SB.recover = (email, redirectTo) => request(`/auth/v1/recover?redirect_to=${encodeURIComponent(redirectTo)}`, { method: "POST", body: { email }, auth: false });
+  SB.setPassword = (accessToken, password) => request("/auth/v1/user", { method: "PUT", body: { password }, auth: false, headers: { Authorization: "Bearer " + accessToken } });
   SB.signOut = () => saveSession(null);
 })();

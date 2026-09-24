@@ -29,12 +29,53 @@
       <div class="field"><label>Email</label><input class="input" type="email" id="em" autocomplete="username" required></div>
       <div class="field"><label>Password</label><input class="input" type="password" id="pw" autocomplete="current-password" required></div>
       ${msg ? `<div class="chip red" style="height:auto;padding:8px 10px;margin-bottom:12px;white-space:normal">${esc(msg)}</div>` : ""}
-      <button class="btn btn-primary btn-lg" style="width:100%">Sign in</button></form></div>`;
+      <button class="btn btn-primary btn-lg" style="width:100%">Sign in</button>
+      <button type="button" class="btn btn-ghost" id="signup" style="width:100%;margin-top:8px">First time? Create inspector account</button>
+      <button type="button" class="btn btn-ghost" id="forgot" style="width:100%">Set / reset password</button></form></div>`;
+    $("#forgot").onclick = async () => {
+      const email = $("#em").value.trim();
+      if (!email) return gate("Type your email above, then click “Set / reset password”.");
+      try {
+        await SB.recover(email, location.origin + location.pathname);
+        gate(`Password link sent to ${email}. Open it on this laptop: it brings you back here to choose a new password.`);
+      } catch (err) { gate(err.message); }
+    };
+    $("#signup").onclick = async () => {
+      const email = $("#em").value.trim(), pw = $("#pw").value;
+      if (!email || pw.length < 6) return gate("Type the email and a password (at least 6 characters) above, then click “Create inspector account”.");
+      try {
+        const r = await SB.signUp(email, pw);
+        const confirmed = r.access_token || r.user?.email_confirmed_at || r.email_confirmed_at;
+        gate(confirmed ? `Account created for ${email}. Now add it to the inspector list (see below), then sign in.`
+                       : `Account created. Open the confirmation email Supabase sent to ${email} and click the link, then add it to the inspector list and sign in.`);
+        showSql(email);
+      } catch (err) {
+        gate(/duplicate key|already registered|already exists/i.test(err.message)
+          ? `An account for ${email} already exists. Click “Set / reset password” to get a link to choose its password.` : err.message);
+      }
+    };
     $("#lf").onsubmit = async (e) => {
       e.preventDefault();
       try { await SB.signIn($("#em").value.trim(), $("#pw").value); await start(); }
-      catch (err) { gate(err.message === "Invalid login credentials" ? "Wrong email or password." : err.message); }
+      catch (err) {
+        const hint = {
+          "Invalid login credentials": "Wrong email or password (Supabase: Invalid login credentials). Check the user exists in Authentication → Users and was created with a password.",
+          "Email not confirmed": "This user isn't confirmed yet. In Supabase → Authentication → Users, recreate it with “Auto Confirm User” ticked.",
+        }[err.message];
+        gate(hint || err.message);
+      }
     };
+  }
+
+  function showSql(email) {
+    const box = document.createElement("div");
+    box.className = "pre";
+    box.style.cssText = "user-select:text;margin-top:12px";
+    box.textContent = `insert into public.inspectors (email) values ('${email.replace(/'/g, "''")}');`;
+    const hint = document.createElement("p");
+    hint.style.cssText = "font-size:12.5px;color:var(--text-2);margin:12px 0 0";
+    hint.textContent = "Run this once in Supabase → SQL Editor (it gives the account inspector access):";
+    $("#lf").append(hint, box);
   }
 
   async function start() {
@@ -42,8 +83,10 @@
     try { rows = await SB.select("inspectors", "select=email"); }
     catch (e) { SB.signOut(); return gate(e.message); }
     if (!rows.length) {
+      const email = SB.session?.email || $("#em")?.value || "your@email";
       SB.signOut();
-      return gate(`This account isn't on the inspector list. In Supabase → SQL Editor run: insert into inspectors (email) values ('your@email');`);
+      gate("Signed in, but this account isn't on the inspector list yet.");
+      return showSql(email);
     }
     shell();
     await load(true);
@@ -427,6 +470,35 @@
     $$("[data-delst]").forEach((b) => b.onclick = async () => { if (!confirm(`Delete ${b.dataset.delst} and all their submissions?`)) return; await SB.remove("students", `reg_no=eq.${encodeURIComponent(b.dataset.delst)}`); await load(false); renderSettings(); });
   }
 
+  /* ================================================================ password links */
+  // Links from Supabase emails (password reset, invite, sign-up confirmation) come back with the
+  // session in the URL fragment: #access_token=...&type=recovery
+  function setPasswordPage(token) {
+    root.innerHTML = `<div class="gate"><form class="card" id="spf">
+      <div class="brand" style="margin-bottom:16px">${BB.brandHtml()}</div>
+      <h2 style="margin:0 0 4px">Choose your password</h2><p style="margin:0 0 16px;color:var(--text-2);font-size:13px">For the inspector account. At least 6 characters.</p>
+      <div class="field"><label>New password</label><input class="input" type="password" id="np1" autocomplete="new-password" required minlength="6"></div>
+      <div class="field"><label>Repeat password</label><input class="input" type="password" id="np2" autocomplete="new-password" required minlength="6"></div>
+      <div id="spmsg"></div>
+      <button class="btn btn-primary btn-lg" style="width:100%">Save password</button></form></div>`;
+    $("#spf").onsubmit = async (e) => {
+      e.preventDefault();
+      const a = $("#np1").value, b = $("#np2").value;
+      const say = (m) => { $("#spmsg").innerHTML = `<div class="chip red" style="height:auto;padding:8px 10px;margin-bottom:12px;white-space:normal">${esc(m)}</div>`; };
+      if (a.length < 6) return say("At least 6 characters.");
+      if (a !== b) return say("The two passwords don't match.");
+      try {
+        const u = await SB.setPassword(token, a);
+        history.replaceState(null, "", location.pathname);
+        gate(`Password saved for ${u.email || "your account"}. Sign in below.`);
+        if (u.email) $("#em").value = u.email;
+      } catch (err) { say(err.message); }
+    };
+  }
+
   /* ================================================================ boot */
-  if (SB.session) start().catch(() => gate()); else gate();
+  const hash = new URLSearchParams(location.hash.slice(1));
+  if (hash.get("access_token") && /recovery|invite|signup|magiclink/.test(hash.get("type") || "")) setPasswordPage(hash.get("access_token"));
+  else if (hash.get("error_description")) { history.replaceState(null, "", location.pathname); gate(hash.get("error_description").replace(/\+/g, " ") + " Ask for a new link."); }
+  else if (SB.session) start().catch(() => gate()); else gate();
 })();
