@@ -127,12 +127,25 @@
   }
 
   async function pingOctave() {
+    const wasOk = D.octaveOk;
     try {
       const r = await fetch(D.octave + "/api/info", { cache: "no-store" });
       D.octaveOk = r.ok && (await r.json()).engine;
     } catch (e) { D.octaveOk = false; }
     const p = $("#octpill");
-    if (p) { p.className = "pillx " + (D.octaveOk ? "ok" : "bad"); p.innerHTML = `<i></i>${D.octaveOk ? "Octave ready" : "Octave offline"}`; }
+    if (!p) return;
+    // This page is served over https; Chrome shows a one-time "Allow this site to access your
+    // local network?" popup the first time it reaches http://localhost. Until that's accepted,
+    // every request fails silently (no visible error) - point inspectors at the fix instead of
+    // just saying "offline".
+    const isLocal = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])/i.test(D.octave);
+    const needsPermission = !D.octaveOk && isLocal && location.protocol === "https:";
+    p.className = "pillx " + (D.octaveOk ? "ok" : needsPermission ? "warn" : "bad");
+    p.innerHTML = `<i></i>${D.octaveOk ? "Octave ready" : needsPermission ? "Octave: allow local network?" : "Octave offline"}`;
+    p.title = D.octaveOk ? "Local Octave engine (click to re-check)"
+      : needsPermission ? "Chrome may be showing a popup asking to allow this site to access your local network - click Allow, then click here to re-check. If there's no popup, start the engine: double-click start_windows.bat on this laptop."
+      : "Can't reach the Octave engine. Start it on this laptop (double-click start_windows.bat), then click here to re-check.";
+    if (needsPermission && !wasOk && !D.warnedOctave) { D.warnedOctave = true; toast("Chrome may be asking to allow local network access for this site - click Allow, then the Octave pill up top.", "warn", 9000); }
   }
 
   /* ================================================================ shell */
@@ -355,7 +368,7 @@
       try {
         const r = await (await fetch(D.octave + "/api/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code }) })).json();
         $("#qout").innerHTML = `<div class="pre">${esc(label)}\n${esc(r.stdout || "")}${r.error ? `\n${r.error.line ? "Line " + r.error.line + ": " : ""}${esc(r.error.message)}` : ""}\n[${r.status} · ${r.time_ms} ms${r.figures?.length ? ` · ${r.figures.length} figure(s)` : ""}]</div>`;
-      } catch (e) { $("#qout").innerHTML = `<div class="pre">Octave engine not reachable at ${esc(D.octave)}.</div>`; }
+      } catch (e) { $("#qout").innerHTML = `<div class="pre">Octave engine not reachable at ${esc(D.octave)}.\nStart it on this laptop (double-click start_windows.bat), or if it's already running, check whether Chrome popped up an "allow local network access" prompt for this site and click Allow.</div>`; }
     };
     $("#tB").onclick = () => test(eb.value, "buggy code");
     $("#tS").onclick = () => test(es.value, "reference solution");

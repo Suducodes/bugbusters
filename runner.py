@@ -224,8 +224,10 @@ class OctaveRunner:
             }
         if not self.octave:
             return {"status": "engine_missing", "stdout": "", "stderr": "",
-                    "error": {"line": 0, "message": "GNU Octave was not found on the server. "
-                              "Set BB_OCTAVE or run the Docker image."},
+                    "error": {"line": 0, "message": "GNU Octave was not found on this laptop. "
+                              "Install it from octave.org/download (or 'winget install GNU.Octave'), "
+                              "then restart the engine. If it's installed somewhere unusual, set "
+                              "the BB_OCTAVE environment variable to its octave-cli.exe path."},
                     "vars": [], "figures": [], "time_ms": 0}
 
         acquired = self.slots.acquire(timeout=60)
