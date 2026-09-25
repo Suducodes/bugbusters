@@ -4,12 +4,18 @@ services:
     image: bugbusters
     container_name: bugbusters
     ports:
-      - "127.0.0.1:8080:8080"   # only this laptop can reach the engine
+      - "127.0.0.1:8080:8080"   # for curl/testing only - the website talks to Supabase, not this
     volumes:
       # Drop problem scripts (.m) and data files (.mat, .csv) in this folder.
       - ./files:/files
+      # Remembers the inspector login (as a refresh token) across restarts.
+      - ./data:/data
     environment:
       BB_TIMEOUT: "15"          # seconds per run
+      # docker compose up -d is headless (no console to type into), so give the inspector login
+      # here instead - same email/password used on the inspector web page:
+      # BB_ENGINE_EMAIL: "you@example.com"
+      # BB_ENGINE_PASSWORD: "your inspector password"
     cap_add:
       - NET_ADMIN               # lets the server cut participant code off the network
     restart: unless-stopped

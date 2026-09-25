@@ -3,5 +3,6 @@
 window.BB_CONFIG = {
   SUPABASE_URL: "https://nyvququkfeqqjiwladmx.supabase.co",
   SUPABASE_ANON_KEY: "sb_publishable_QoGDg0YjMtgXdQwPqgXn2A_YoAyEZ3D",
-  OCTAVE_URL: "http://localhost:8080",   // Octave engine on the inspector's laptop
 };
+// The Octave engine on each inspector's laptop (app.py / start_windows.bat) talks to this same
+// Supabase project directly - see engine_sync.py - so there's no engine URL to configure here.

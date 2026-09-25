@@ -1,17 +1,20 @@
-/* Inspector page: see who submitted each question, review the changes, run the code on the local
-   Octave engine, and give marks. Also manages questions, the clock and the unlock PIN. */
+/* Inspector page: see who submitted each question, review the changes, run the code on the
+   Octave engine running on this laptop, and give marks. Also manages questions, the clock and
+   the unlock PIN.
+
+   "Run in Octave" does NOT fetch http://localhost directly - this page is https (GitHub Pages),
+   and Chrome's Local Network Access permission prompt for reaching localhost from an https page
+   is gated behind an origin trial our site isn't enrolled in, so that fetch is just silently
+   blocked with no prompt ever shown. Instead a run is queued as a row in Supabase (`runs` table);
+   the engine on this laptop, signed in as this same inspector (start_windows.bat), polls for rows
+   addressed to its own email, executes them, and writes the result back. Everything is an
+   ordinary https call to Supabase, same as every other request this page makes. */
 (function () {
   const { $, $$, esc, icons, toast } = BB;
   const root = $("#root");
-  const cfg = window.BB_CONFIG || {};
-  const ls = {
-    get(k, d) { try { const v = localStorage.getItem("bb-insp-" + k); return v == null ? d : v; } catch (e) { return d; } },
-    set(k, v) { try { localStorage.setItem("bb-insp-" + k, v); } catch (e) {} },
-  };
   const D = {
     tab: "marking", problems: [], solutions: {}, subs: [], students: {}, events: [], settings: null,
-    selQ: null, selSub: null, filter: "todo", octave: ls.get("octave", cfg.OCTAVE_URL || "http://localhost:8080"),
-    octaveOk: null, offset: 0, sig: {},
+    selQ: null, selSub: null, filter: "todo", octaveOk: null, offset: 0, sig: {},
   };
 
   const subState = (s) => s.marks == null ? "new" : s.marked_version === s.version ? "marked" : "updated";
@@ -98,13 +101,14 @@
   /* ================================================================ data */
   async function load(first) {
     try {
-      const [problems, sols, subs, studs, settings, events] = await Promise.all([
+      const [problems, sols, subs, studs, settings, events, engines] = await Promise.all([
         SB.select("problems", "select=*&order=position,id"),
         SB.select("solutions", "select=*"),
         SB.select("submissions", "select=*&order=submitted_at"),
         SB.select("students", "select=*&order=created_at"),
         SB.select("settings", "select=*&id=eq.1"),
         SB.select("events", "select=*&order=created_at.desc&limit=300"),
+        SB.select("engine_status", "select=*&order=updated_at.desc"),
       ]);
       D.problems = problems;
       D.solutions = Object.fromEntries(sols.map((s) => [s.problem_id, s.code]));
@@ -112,6 +116,7 @@
       D.students = Object.fromEntries(studs.map((s) => [s.reg_no, s]));
       D.settings = settings[0];
       D.events = events;
+      D.engines = engines;
       if (first) { try { const st = await SB.rpc("bb_state"); D.offset = Date.parse(st.now) / 1000 - Date.now() / 1000; } catch (e) {} }
       if (D.selQ == null && problems.length) D.selQ = problems[0].id;
       $("#netpill")?.classList.remove("bad");
@@ -126,26 +131,23 @@
     else if (D.tab === "log") renderLog();
   }
 
+  // The engine on the inspector's laptop writes a heartbeat row (its own email, refreshed every
+  // ~5s) while start_windows.bat is running. "Ready" just means that row is recent - no fetch to
+  // localhost involved.
   async function pingOctave() {
-    const wasOk = D.octaveOk;
     try {
-      const r = await fetch(D.octave + "/api/info", { cache: "no-store" });
-      D.octaveOk = r.ok && (await r.json()).engine;
+      const email = SB.session?.email;
+      const rows = email ? await SB.select("engine_status", `select=updated_at,octave_path&email=eq.${encodeURIComponent(email)}`) : [];
+      const row = rows[0];
+      D.octaveOk = !!row && (Date.now() - Date.parse(row.updated_at)) < 12000;
+      D.octavePath = row?.octave_path || "";
     } catch (e) { D.octaveOk = false; }
     const p = $("#octpill");
     if (!p) return;
-    // This page is served over https; Chrome shows a one-time "Allow this site to access your
-    // local network?" popup the first time it reaches http://localhost. Until that's accepted,
-    // every request fails silently (no visible error) - point inspectors at the fix instead of
-    // just saying "offline".
-    const isLocal = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])/i.test(D.octave);
-    const needsPermission = !D.octaveOk && isLocal && location.protocol === "https:";
-    p.className = "pillx " + (D.octaveOk ? "ok" : needsPermission ? "warn" : "bad");
-    p.innerHTML = `<i></i>${D.octaveOk ? "Octave ready" : needsPermission ? "Octave: allow local network?" : "Octave offline"}`;
-    p.title = D.octaveOk ? "Local Octave engine (click to re-check)"
-      : needsPermission ? "Chrome may be showing a popup asking to allow this site to access your local network - click Allow, then click here to re-check. If there's no popup, start the engine: double-click start_windows.bat on this laptop."
-      : "Can't reach the Octave engine. Start it on this laptop (double-click start_windows.bat), then click here to re-check.";
-    if (needsPermission && !wasOk && !D.warnedOctave) { D.warnedOctave = true; toast("Chrome may be asking to allow local network access for this site - click Allow, then the Octave pill up top.", "warn", 9000); }
+    p.className = "pillx " + (D.octaveOk ? "ok" : "bad");
+    p.innerHTML = `<i></i>${D.octaveOk ? "Octave ready" : "Octave offline"}`;
+    p.title = D.octaveOk ? `Engine running on this laptop (${D.octavePath}) - click to re-check`
+      : "Start the engine on this laptop: double-click start_windows.bat, sign in with your inspector email when it asks, then click here to re-check.";
   }
 
   /* ================================================================ shell */
@@ -281,28 +283,51 @@
     setTimeout(() => $("#score")?.focus(), 30);
   }
 
+  function renderRunResult(res, fallbackStatus) {
+    let h = "";
+    if (res.stdout) h += esc(res.stdout.replace(/\s+$/, "")) + "\n";
+    if (res.stderr) h += `<span class="warn">${esc(res.stderr)}</span>\n`;
+    if (res.error) h += `<span class="err">${res.status === "blocked" ? "Blocked" : res.status === "timeout" ? "Time limit" : "Error"}${res.error.line ? ` at line ${res.error.line}` : ""}: ${esc(res.error.message)}</span>\n`;
+    if (!res.stdout && !res.stderr && !res.error) h += `<span class="meta">(no output)</span>\n`;
+    (res.figures || []).forEach((f) => { h += `<img src="${f}" alt="figure">`; });
+    h += `<span class="meta">${res.status === "ok" ? "✓ finished" : "✗ " + (res.status || fallbackStatus)} in ${res.time_ms ?? "?"} ms</span>\n`;
+    return h;
+  }
+
+  // Queues the run as a row in Supabase and polls for the result - see the file header for why
+  // this doesn't just fetch http://localhost directly.
+  let runSeq = 0;
   async function runOctave(code, label) {
     const out = $("#rvOut");
     if (!out) return;
-    out.innerHTML += `\n<span class="cmd">&gt;&gt; run ${esc(label)}</span>  <span class="meta">${new Date().toLocaleTimeString()}</span>\n<span class="meta">running…</span>`;
+    const slotId = `run-slot-${++runSeq}`;
+    out.innerHTML += `\n<span class="cmd">&gt;&gt; run ${esc(label)}</span>  <span class="meta">${new Date().toLocaleTimeString()}</span>\n<span class="meta" id="${slotId}">sending to your Octave engine…</span>`;
     out.scrollTop = out.scrollHeight;
-    let r;
+    const slot = () => document.getElementById(slotId);
+    const finish = (html) => { const el = slot(); if (el) el.outerHTML = html; out.scrollTop = out.scrollHeight; };
+    if (!SB.session?.email) { finish(`<span class="err">You're signed out - reload and sign in again.</span>`); return; }
+    let rowId;
     try {
-      const res = await fetch(D.octave + "/api/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code }) });
-      r = await res.json();
-    } catch (e) {
-      out.innerHTML = out.innerHTML.replace(/<span class="meta">running…<\/span>$/, `<span class="err">Can't reach the Octave engine at ${esc(D.octave)}. Start it on this laptop with: docker compose up -d</span>\n`);
-      D.octaveOk = false; pingOctave(); return;
+      const [row] = await SB.insert("runs", { assigned_email: SB.session.email, code, label });
+      rowId = row.id;
+    } catch (e) { finish(`<span class="err">Could not queue the run: ${esc(e.message)}</span>`); return; }
+    const started = Date.now();
+    let done = null;
+    while (Date.now() - started < 25000) {
+      await new Promise((res) => setTimeout(res, 700));
+      if (!slot()) return; // the review pane moved on (a different submission was opened)
+      let row;
+      try { [row] = await SB.select("runs", `id=eq.${rowId}&select=status,result`); } catch (e) { continue; }
+      if (row && row.status !== "pending" && row.status !== "running") { done = row; break; }
     }
-    let h = "";
-    if (r.stdout) h += esc(r.stdout.replace(/\s+$/, "")) + "\n";
-    if (r.stderr) h += `<span class="warn">${esc(r.stderr)}</span>\n`;
-    if (r.error) h += `<span class="err">${r.status === "blocked" ? "Blocked" : r.status === "timeout" ? "Time limit" : "Error"}${r.error.line ? ` at line ${r.error.line}` : ""}: ${esc(r.error.message)}</span>\n`;
-    if (!r.stdout && !r.stderr && !r.error) h += `<span class="meta">(no output)</span>\n`;
-    (r.figures || []).forEach((f) => { h += `<img src="${f}" alt="figure">`; });
-    h += `<span class="meta">${r.status === "ok" ? "✓ finished" : "✗ " + r.status} in ${r.time_ms} ms</span>\n`;
-    out.innerHTML = out.innerHTML.replace(/<span class="meta">running…<\/span>$/, h);
-    out.scrollTop = out.scrollHeight;
+    if (!slot()) return;
+    if (!done) {
+      finish(`<span class="err">No response after 25s. Is start_windows.bat running on this laptop, signed in as ${esc(SB.session.email)}?</span>`);
+      pingOctave();
+      return;
+    }
+    finish(renderRunResult(done.result || {}, done.status));
+    pingOctave();
   }
 
   async function saveMarks(sub, p) {
@@ -364,11 +389,22 @@
     const eb = new CodeEditor($("#edB"), { value: p.buggy_code, original: p.buggy_code, fontSize: 13 });
     const es = new CodeEditor($("#edS"), { value: isNew ? "" : (D.solutions[p.id] || ""), original: p.buggy_code, fontSize: 13 });
     const test = async (code, label) => {
-      $("#qout").innerHTML = `<div class="pre">Running ${label}…</div>`;
-      try {
-        const r = await (await fetch(D.octave + "/api/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code }) })).json();
-        $("#qout").innerHTML = `<div class="pre">${esc(label)}\n${esc(r.stdout || "")}${r.error ? `\n${r.error.line ? "Line " + r.error.line + ": " : ""}${esc(r.error.message)}` : ""}\n[${r.status} · ${r.time_ms} ms${r.figures?.length ? ` · ${r.figures.length} figure(s)` : ""}]</div>`;
-      } catch (e) { $("#qout").innerHTML = `<div class="pre">Octave engine not reachable at ${esc(D.octave)}.\nStart it on this laptop (double-click start_windows.bat), or if it's already running, check whether Chrome popped up an "allow local network access" prompt for this site and click Allow.</div>`; }
+      $("#qout").innerHTML = `<div class="pre">Sending ${esc(label)} to your Octave engine…</div>`;
+      if (!SB.session?.email) { $("#qout").innerHTML = `<div class="pre">You're signed out - reload and sign in again.</div>`; return; }
+      let rowId;
+      try { const [row] = await SB.insert("runs", { assigned_email: SB.session.email, code, label }); rowId = row.id; }
+      catch (e) { $("#qout").innerHTML = `<div class="pre">Could not queue the run: ${esc(e.message)}</div>`; return; }
+      const started = Date.now();
+      let done = null;
+      while (Date.now() - started < 25000) {
+        await new Promise((res) => setTimeout(res, 700));
+        let row;
+        try { [row] = await SB.select("runs", `id=eq.${rowId}&select=status,result`); } catch (e) { continue; }
+        if (row && row.status !== "pending" && row.status !== "running") { done = row; break; }
+      }
+      if (!done) { $("#qout").innerHTML = `<div class="pre">No response after 25s. Is start_windows.bat running on this laptop, signed in as ${esc(SB.session.email)}?</div>`; return; }
+      const r = done.result || {};
+      $("#qout").innerHTML = `<div class="pre">${esc(label)}\n${esc(r.stdout || "")}${r.error ? `\n${r.error.line ? "Line " + r.error.line + ": " : ""}${esc(r.error.message)}` : ""}\n[${r.status || done.status} · ${r.time_ms ?? "?"} ms${r.figures?.length ? ` · ${r.figures.length} figure(s)` : ""}]</div>`;
     };
     $("#tB").onclick = () => test(eb.value, "buggy code");
     $("#tS").onclick = () => test(es.value, "reference solution");
@@ -459,10 +495,14 @@
         <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn-primary" id="saveS">Save</button><button class="btn" data-add="10">+10 min</button><button class="btn" data-add="30">+30 min</button><button class="btn btn-danger" id="closeNow">Close now</button><button class="btn" id="noEnd">Remove end time</button></div>
         <p style="font-size:12.5px;color:var(--text-3);margin:12px 0 0">Students see a countdown. Submissions made offline in the last ${s.grace_seconds ?? 120} s before closing are still accepted when they reconnect.</p>
       </div></section>
-      <section class="card"><div class="hd"><h3>Unlock PIN &amp; Octave</h3></div><div class="bd">
+      <section class="card"><div class="hd"><h3>Unlock PIN &amp; Octave engines</h3></div><div class="bd">
         <div class="field"><label>New invigilator unlock PIN</label><div style="display:flex;gap:8px"><input class="input mono" id="pin" placeholder="at least 4 characters"><button class="btn" id="savePin">Change</button></div></div>
-        <div class="field"><label>Octave engine on this laptop</label><div style="display:flex;gap:8px"><input class="input mono" id="oct" value="${esc(D.octave)}"><button class="btn" id="saveOct">Save</button></div></div>
-        <p style="font-size:12.5px;color:var(--text-3);margin:0">Start the engine with <code>docker compose up -d</code> in the bugbusters folder. Put data files that questions load (e.g. signal.mat) in its <code>files</code> folder.</p>
+        <label class="label-caps" style="display:block;margin-bottom:8px">Connected Octave engines</label>
+        ${(D.engines || []).length ? (D.engines || []).map((e) => {
+          const on = Date.now() - Date.parse(e.updated_at) < 12000;
+          return `<div class="ev" style="padding:8px 0"><span class="chip ${on ? "green" : "grey"}">${on ? "online" : "offline"}</span><div style="flex:1"><b>${esc(e.email)}</b><div class="what">${on ? "just now" : BB.ago(Date.parse(e.updated_at) / 1000)}${e.octave_path ? ` · ${esc(e.octave_path)}` : ""}</div></div></div>`;
+        }).join("") : `<p style="font-size:12.5px;color:var(--text-3);margin:0 0 10px">No engine has connected yet.</p>`}
+        <p style="font-size:12.5px;color:var(--text-3);margin:12px 0 0">Each inspector double-clicks <code>start_windows.bat</code> on their own laptop and signs in with their inspector email/password when it asks - no other setup needed. Put data files that questions load (e.g. signal.mat) in its <code>files</code> folder.</p>
       </div></section>
       <section class="card" style="grid-column:1/-1"><div class="hd"><h3>Students (${studs.length})</h3></div>
         <div class="tablecard"><table class="table"><thead><tr><th>Name</th><th>Register No</th><th>Last seen</th><th>Laptop</th><th></th></tr></thead><tbody>
@@ -478,7 +518,6 @@
     $("#closeNow").onclick = () => confirm("Close submissions now for everyone?") && upd({ is_open: false }, "Submissions closed");
     $("#noEnd").onclick = () => upd({ ends_at: null }, "End time removed");
     $("#savePin").onclick = async () => { try { await SB.rpc("bb_set_pin", { p_pin: $("#pin").value }); $("#pin").value = ""; toast("Unlock PIN changed", "ok"); } catch (e) { toast(e.message, "error"); } };
-    $("#saveOct").onclick = () => { D.octave = $("#oct").value.trim().replace(/\/+$/, ""); ls.set("octave", D.octave); pingOctave(); toast("Saved", "ok"); };
     $$("[data-rel]").forEach((b) => b.onclick = async () => { await SB.update("students", `reg_no=eq.${encodeURIComponent(b.dataset.rel)}`, { device_key: null }); toast("Released. They can log in on another laptop now.", "ok"); await load(false); renderSettings(); });
     $$("[data-delst]").forEach((b) => b.onclick = async () => { if (!confirm(`Delete ${b.dataset.delst} and all their submissions?`)) return; await SB.remove("students", `reg_no=eq.${encodeURIComponent(b.dataset.delst)}`); await load(false); renderSettings(); });
   }

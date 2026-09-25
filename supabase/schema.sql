@@ -81,6 +81,33 @@ create table if not exists public.events (
   created_at timestamptz not null default now()
 );
 
+-- The inspector's browser is served over https, so Chrome may silently refuse a direct fetch to
+-- http://localhost (Local Network Access is behind an origin-trial permission prompt that our
+-- page isn't enrolled in - it just fails with no visible prompt). To sidestep that entirely, a
+-- "Run" queues a row here; the Octave engine running on the inspector's own laptop signs in with
+-- that same inspector's login, polls for rows addressed to its email, executes them, and writes
+-- the result back - all as ordinary https calls to Supabase, nothing crosses the browser/OS
+-- local-network boundary.
+create table if not exists public.runs (
+  id bigint generated always as identity primary key,
+  assigned_email text not null,
+  code text not null,
+  label text default '',
+  status text not null default 'pending',  -- pending -> running -> done | error
+  result jsonb,
+  created_at timestamptz not null default now(),
+  done_at timestamptz
+);
+create index if not exists ix_runs_pending on public.runs (assigned_email, status, created_at);
+
+-- One row per inspector laptop's engine, refreshed every few seconds while start_windows.bat is
+-- running, so the inspector page can show "Octave ready" without ever calling localhost.
+create table if not exists public.engine_status (
+  email text primary key,
+  updated_at timestamptz not null default now(),
+  octave_path text
+);
+
 -- ---------------------------------------------------------------------------------- RLS
 alter table public.inspectors  enable row level security;
 alter table public.settings    enable row level security;
@@ -89,6 +116,8 @@ alter table public.solutions   enable row level security;
 alter table public.students    enable row level security;
 alter table public.submissions enable row level security;
 alter table public.events      enable row level security;
+alter table public.runs           enable row level security;
+alter table public.engine_status  enable row level security;
 
 drop policy if exists "inspectors read" on public.inspectors;
 create policy "inspectors read" on public.inspectors for select to authenticated using (public.is_inspector());
@@ -109,7 +138,7 @@ create policy "inspectors manage problems" on public.problems for all to authent
 do $$
 declare t text;
 begin
-  foreach t in array array['solutions', 'students', 'submissions', 'events'] loop
+  foreach t in array array['solutions', 'students', 'submissions', 'events', 'runs', 'engine_status'] loop
     execute format('drop policy if exists "inspectors manage %1$s" on public.%1$I', t);
     execute format('create policy "inspectors manage %1$s" on public.%1$I for all to authenticated
                     using (public.is_inspector()) with check (public.is_inspector())', t);
