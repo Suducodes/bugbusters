@@ -362,41 +362,44 @@ __bb_r = fflush(stdout); __bb_r = fflush(stderr);
 printf('\\n@@BB_{nonce}@@\\n');
 if ~__bb_ok
   __bb_line = 0;
-  for __bb_k = 1:numel(__bb_e.stack)
-    if ~isempty(strfind(__bb_e.stack(__bb_k).file, '{SCRIPT_NAME}')) || strcmp(__bb_e.stack(__bb_k).name, 'debug_me')
+  for __bb_k = 1:builtin('numel', __bb_e.stack)
+    if ~builtin('isempty', strfind(__bb_e.stack(__bb_k).file, '{SCRIPT_NAME}')) || strcmp(__bb_e.stack(__bb_k).name, 'debug_me')
       __bb_line = __bb_e.stack(__bb_k).line; break;
     end
   end
   __bb_tok = regexp(__bb_e.message, 'near line (\\d+)', 'tokens', 'once');
-  if __bb_line == 0 && ~isempty(__bb_tok), __bb_line = str2double(__bb_tok{{1}}); end
+  if __bb_line == 0 && ~builtin('isempty', __bb_tok), __bb_line = str2double(__bb_tok{{1}}); end
   printf('ERR\\t%d\\t%s\\n', __bb_line, strrep(strrep(__bb_e.message, char(13), ''), char(10), '\\n'));
 end
-__bb_v = who;
-for __bb_i = 1:numel(__bb_v)
+__bb_v = builtin('who');
+for __bb_i = 1:builtin('numel', __bb_v)
   __bb_n = __bb_v{{__bb_i}};
   if strncmp(__bb_n, '__bb', 4), continue; end
   __bb_x = eval(__bb_n);
-  __bb_sz = sprintf('%dx', size(__bb_x)); __bb_sz = __bb_sz(1:end-1);
+  % builtin(...) everywhere below: a student's own variable can be named sum/min/max/size/class/
+  % etc, which would otherwise shadow the real function for the rest of this workspace and break
+  % our own introspection (seen for real: `sum = a + b;` breaking the sum() call here).
+  __bb_sz = sprintf('%dx', builtin('size', __bb_x)); __bb_sz = __bb_sz(1:end-1);
   __bb_p = '';
-  if (isnumeric(__bb_x) || islogical(__bb_x))
-    __bb_d = double(__bb_x(:));
-    if ~isreal(__bb_d), __bb_d = abs(__bb_d); end
-    if isempty(__bb_d), __bb_st = [0 0 0 0];
-    else, __bb_st = [sum(__bb_d), sum(abs(__bb_d)), min(__bb_d), max(__bb_d)]; end
-    if numel(__bb_x) == 1, __bb_p = num2str(__bb_x, 8);
-    elseif numel(__bb_x) <= 8 && ndims(__bb_x) == 2, __bb_p = mat2str(__bb_x, 6); end
-    printf('VAR\\t%s\\t%s\\t%s\\t%d\\t%.12g\\t%.12g\\t%.12g\\t%.12g\\t%s\\n', __bb_n, class(__bb_x), __bb_sz, numel(__bb_x), __bb_st, __bb_p);
+  if (builtin('isnumeric', __bb_x) || builtin('islogical', __bb_x))
+    __bb_d = builtin('double', __bb_x(:));
+    if ~builtin('isreal', __bb_d), __bb_d = builtin('abs', __bb_d); end
+    if builtin('isempty', __bb_d), __bb_st = [0 0 0 0];
+    else, __bb_st = [builtin('sum', __bb_d), builtin('sum', builtin('abs', __bb_d)), builtin('min', __bb_d), builtin('max', __bb_d)]; end
+    if builtin('numel', __bb_x) == 1, __bb_p = builtin('num2str', __bb_x, 8);
+    elseif builtin('numel', __bb_x) <= 8 && builtin('ndims', __bb_x) == 2, __bb_p = builtin('mat2str', __bb_x, 6); end
+    printf('VAR\\t%s\\t%s\\t%s\\t%d\\t%.12g\\t%.12g\\t%.12g\\t%.12g\\t%s\\n', __bb_n, builtin('class', __bb_x), __bb_sz, builtin('numel', __bb_x), __bb_st, __bb_p);
   else
-    if ischar(__bb_x), __bb_p = __bb_x(1:min(end, 80));
-    elseif isstruct(__bb_x), __bb_p = strjoin(fieldnames(__bb_x)', ', ');
-    elseif isa(__bb_x, 'function_handle'), __bb_p = func2str(__bb_x); end
-    __bb_p = strrep(strrep(__bb_p, char(10), ' '), char(9), ' ');
-    printf('VAR\\t%s\\t%s\\t%s\\t%d\\t\\t\\t\\t\\t%s\\n', __bb_n, class(__bb_x), __bb_sz, numel(__bb_x), __bb_p);
+    if builtin('ischar', __bb_x), __bb_p = __bb_x(1:min(end, 80));
+    elseif builtin('isstruct', __bb_x), __bb_p = builtin('strjoin', builtin('fieldnames', __bb_x)', ', ');
+    elseif builtin('isa', __bb_x, 'function_handle'), __bb_p = builtin('func2str', __bb_x); end
+    __bb_p = builtin('strrep', builtin('strrep', __bb_p, char(10), ' '), char(9), ' ');
+    printf('VAR\\t%s\\t%s\\t%s\\t%d\\t\\t\\t\\t\\t%s\\n', __bb_n, builtin('class', __bb_x), __bb_sz, builtin('numel', __bb_x), __bb_p);
   end
 end
-__bb_f = sort(get(0, 'children'));
+__bb_f = builtin('sort', get(0, 'children'));
 __bb_dev = '-dpng'; if strcmp(graphics_toolkit(), 'gnuplot'), __bb_dev = '-dpngcairo'; end
-for __bb_i = 1:min(numel(__bb_f), 4)
+for __bb_i = 1:builtin('min', builtin('numel', __bb_f), 4)
   try
     print(__bb_f(__bb_i), sprintf('__bbfig_%d.png', __bb_i), __bb_dev, '-r100');
     printf('FIG\\t__bbfig_%d.png\\n', __bb_i);
