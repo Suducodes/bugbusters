@@ -235,6 +235,12 @@ class OctaveRunner:
             return {"status": "busy", "stdout": "", "stderr": "",
                     "error": {"line": 0, "message": "Server is busy, try again in a moment."},
                     "vars": [], "figures": [], "time_ms": 0}
+        # Self-heal: if something outside our control (a stray cleanup command, an antivirus
+        # sweep, ...) removed our own working folders while the engine was running, recreate them
+        # instead of failing every run until someone notices and restarts the process.
+        if not os.path.isdir(self.work_root) or not os.path.isdir(self.guard_dir):
+            os.makedirs(self.work_root, exist_ok=True)
+            self._write_guards()
         work = tempfile.mkdtemp(prefix="run_", dir=self.work_root)
         try:
             return self._run_in(work, code, files, check_vars, timeout, started)
